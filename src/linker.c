@@ -93,7 +93,8 @@ static jv build_lib_search_chain(jq_state *jq, jv search_path, jv jq_origin, jv 
 // in between).
 static jv validate_relpath(jv name) {
   const char *s = jv_string_value(name);
-  if (strchr(s, '\\')) {
+  int len = jv_string_length_bytes(jv_copy(name));
+  if (memchr(s, '\\', len)) {
     jv res = jv_invalid_with_msg(jv_string_fmt("Modules must be named by relative paths using '/', not '\\' (%s)", s));
     jv_free(name);
     return res;
@@ -124,12 +125,23 @@ static jv validate_relpath(jv name) {
 // Assumes name has been validated
 static jv jv_basename(jv name) {
   const char *s = jv_string_value(name);
-  const char *p = strrchr(s, '/');
+  int len = jv_string_length_bytes(jv_copy(name));
+  
+  // Find the last occurrence of '/' in the string
+  const char *p = NULL;
+  for (int i = len - 1; i >= 0; i--) {
+    if (s[i] == '/') {
+      p = s + i;
+      break;
+    }
+  }
   if (!p)
     return name;
-  jv res = jv_string_fmt("%s", p);
+  
+  // Create a new string from the substring after the last '/'
+  jv res = jv_string(p + 1);
   jv_free(name);
-  return res;
+  return res; 
 }
 
 // Asummes validated relative path to module
@@ -215,12 +227,26 @@ static jv find_lib(jq_state *jq, jv rel_path, jv search, const char *suffix, jv 
   jv output;
   if (!jv_is_valid(err)) {
     err = jv_invalid_get_msg(err);
-    output = jv_invalid_with_msg(jv_string_fmt("module not found: %s (%s)",
-                                               jv_string_value(rel_path),
-                                               jv_string_value(err)));
+    if (jv_is_valid(err)) {
+      jv rel_path_copy = jv_copy(rel_path);
+      jv err_copy = jv_copy(err);
+      int rel_path_len = jv_string_length_bytes(rel_path_copy);
+      int err_len = jv_string_length_bytes(err_copy);
+      char *rel_path_str = jv_string_value(rel_path_copy);
+      char *err_str = jv_string_value(err_copy);
+      jv msg = jv_string("module not found: ");
+      msg = jv_string_append_buf(msg, rel_path_str, rel_path_len);
+      msg = jv_string_append_str(msg, " (");
+      msg = jv_string_append_buf(msg, err_str, err_len);
+      msg = jv_string_append_str(msg, ")");
+      output = jv_invalid_with_msg(msg);
+      jv_free(rel_path_copy);
+      jv_free(err_copy);
+    } else {
+      output = jv_invalid_with_msg(jv_string_concat(jv_string("module not found: "), jv_copy(rel_path)));
+    }
   } else {
-    output = jv_invalid_with_msg(jv_string_fmt("module not found: %s",
-                                               jv_string_value(rel_path)));
+    output = jv_invalid_with_msg(jv_string_concat(jv_string("module not found: "), jv_copy(rel_path)));
   }
   jv_free(err);
   jv_free(rel_path);
